@@ -28,7 +28,7 @@ function getBody(req) {
   });
 }
 function send(res, code, data) {
-  res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' });
+  res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache', 'Expires': '0' });
   res.end(JSON.stringify(data));
 }
 function getUser(req) {
@@ -39,32 +39,41 @@ function getUser(req) {
 }
 
 function parseMultipart(body, boundary) {
-  const sep = Buffer.from('\r\n--' + boundary);
+  // Fix: search for --boundary directly, then skip leading \r\n after it
+  const searchStr = '--' + boundary;
+  const searchBuf = Buffer.from(searchStr);
   const files = [];
-  let start = 0;
+  let pos = 0;
   while (true) {
-    const idx = body.indexOf(sep, start);
+    const idx = body.indexOf(searchBuf, pos);
     if (idx === -1) break;
-    let part = body.slice(start, idx);
-    // Skip leading \r\n that follows each separator
-    if (part.length >= 2 && part[0] === 0x0D && part[1] === 0x0A) {
-      part = part.slice(2);
+    let ps = idx + searchBuf.length;
+    // Skip optional leading \r\n after the boundary marker
+    if (body[ps] === 0x0D && body[ps + 1] === 0x0A) ps += 2;
+    // Find next boundary
+    const ni = body.indexOf(searchBuf, ps);
+    if (ni === -1) break;
+    const part = body.slice(ps, ni);
+    // Remove trailing \r\n
+    if (part.length >= 2 && part[part.length - 2] === 0x0D && part[part.length - 1] === 0x0A) {
+      // keep as is, we'll handle below
     }
-    if (part.length < 20) { start = idx + sep.length; continue; }
     const crlfIdx = part.indexOf('\r\n');
-    if (crlfIdx === -1) { start = idx + sep.length; continue; }
+    if (crlfIdx === -1) { pos = ni + searchBuf.length; continue; }
     const header = part.slice(0, crlfIdx).toString('utf8').toLowerCase();
-    if (!header.includes('filename=')) { start = idx + sep.length; continue; }
+    if (!header.includes('filename=')) { pos = ni + searchBuf.length; continue; }
     const fm = header.match(/filename="([^"]+)"/i);
-    if (!fm) { start = idx + sep.length; continue; }
+    if (!fm) { pos = ni + searchBuf.length; continue; }
     const dblCrlf = Buffer.from('\r\n\r\n');
     const bodyIdx = part.indexOf(dblCrlf);
-    if (bodyIdx === -1) { start = idx + sep.length; continue; }
-    const data = part.slice(bodyIdx + 4);
-    // DEBUG PARSE
-    console.log('  parseMultipart: found file part, filename=' + fm[1] + ', dataLen=' + data.length);
+    if (bodyIdx === -1) { pos = ni + searchBuf.length; continue; }
+    let data = part.slice(bodyIdx + 4);
+    // Remove trailing \r\n
+    if (data.length >= 2 && data[data.length - 2] === 0x0D && data[data.length - 1] === 0x0A) {
+      data = data.slice(0, data.length - 2);
+    }
     if (data.length > 0) files.push({ filename: fm[1], data });
-    start = idx + sep.length;
+    pos = ni + searchBuf.length;
   }
   return files;
 }
@@ -577,7 +586,7 @@ const server = http.createServer(async (req, res) => {
 
   // ── Serve HTML ──
   if (url.pathname === '/' || url.pathname === '/index.html') {
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache', 'Expires': '0' });
     res.end(HTML);
     return;
   }
