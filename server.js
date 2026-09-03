@@ -39,22 +39,30 @@ function getUser(req) {
 }
 
 function parseMultipart(body, boundary) {
-  const sep = '\r\n--' + boundary;
-  const parts = body.toString('latin1').split(sep);
+  const sep = Buffer.from('\r\n--' + boundary);
   const files = [];
-  for (let i = 1; i < parts.length; i++) {
-    const part = parts[i];
-    const trimmed = part.trim();
-    if (!trimmed || trimmed.startsWith('--')) continue;
-    const he = trimmed.indexOf('\r\n\r\n');
-    if (he === -1) continue;
-    const hdr = trimmed.substring(0, he);
-    const raw = part.substring(he + 4);
-    const clean = raw.endsWith('\r\n') ? raw.slice(0, -2) : raw;
-    const dataBuf = Buffer.from(clean, 'latin1');
-    const fm = hdr.match(/filename="([^"]+)"/i);
-    if (!fm) continue;
-    if (dataBuf.length > 0) files.push({ filename: fm[1], data: dataBuf });
+  let start = 0;
+  while (true) {
+    const idx = body.indexOf(sep, start);
+    if (idx === -1) break;
+    let part = body.slice(start, idx);
+    // Skip leading \r\n that follows each separator
+    if (part.length >= 2 && part[0] === 0x0D && part[1] === 0x0A) {
+      part = part.slice(2);
+    }
+    if (part.length < 20) { start = idx + sep.length; continue; }
+    const crlfIdx = part.indexOf('\r\n');
+    if (crlfIdx === -1) { start = idx + sep.length; continue; }
+    const header = part.slice(0, crlfIdx).toString('utf8').toLowerCase();
+    if (!header.includes('filename=')) { start = idx + sep.length; continue; }
+    const fm = header.match(/filename="([^"]+)"/i);
+    if (!fm) { start = idx + sep.length; continue; }
+    const dblCrlf = Buffer.from('\r\n\r\n');
+    const bodyIdx = part.indexOf(dblCrlf);
+    if (bodyIdx === -1) { start = idx + sep.length; continue; }
+    const data = part.slice(bodyIdx + 4);
+    if (data.length > 0) files.push({ filename: fm[1], data });
+    start = idx + sep.length;
   }
   return files;
 }
