@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>文件管理器</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #f5f7fa;
+    min-height: 100vh;
+    color: #1a1a2e;
+  }
+
+  .container {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 48px 24px;
+  }
+
+  h1 {
+    font-size: 24px;
+    font-weight: 600;
+    margin-bottom: 32px;
+    text-align: center;
+  }
+
+  /* Upload area */
+  .upload-zone {
+    border: 2px dashed #c0c8d8;
+    border-radius: 12px;
+    padding: 48px 24px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+    background: #fff;
+    position: relative;
+  }
+
+  .upload-zone:hover,
+  .upload-zone.drag-over {
+    border-color: #4f6ef7;
+    background: #f0f3ff;
+  }
+
+  .upload-zone input[type="file"] {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    cursor: pointer;
+    width: 100%;
+    height: 100%;
+    border-radius: 12px;
+  }
+
+  .upload-icon {
+    width: 48px;
+    height: 48px;
+    margin: 0 auto 16px;
+    color: #8fa3c4;
+  }
+
+  .upload-zone:hover .upload-icon,
+  .upload-zone.drag-over .upload-icon {
+    color: #4f6ef7;
+  }
+
+  .upload-text {
+    font-size: 15px;
+    color: #555;
+  }
+
+  .upload-text span {
+    color: #4f6ef7;
+    font-weight: 600;
+  }
+
+  .upload-hint {
+    font-size: 13px;
+    color: #999;
+    margin-top: 6px;
+  }
+
+  /* File list */
+  .file-list-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 32px;
+    margin-bottom: 12px;
+  }
+
+  .file-list-header h2 {
+    font-size: 16px;
+    font-weight: 600;
+    color: #333;
+  }
+
+  .clear-all-btn {
+    font-size: 13px;
+    color: #e74c3c;
+    background: none;
+    border: 1px solid #e74c3c;
+    border-radius: 6px;
+    padding: 4px 12px;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+
+  .clear-all-btn:hover {
+    background: #fef0ef;
+  }
+
+  .file-list {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .file-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: #fff;
+    border-radius: 10px;
+    padding: 14px 16px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    animation: fadeIn 0.25s ease;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  .file-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    font-size: 13px;
+    font-weight: 700;
+    color: #fff;
+  }
+
+  .file-info {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .file-name {
+    font-size: 14px;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .file-size {
+    font-size: 12px;
+    color: #888;
+    margin-top: 2px;
+  }
+
+  .file-actions {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+
+  .btn-download, .btn-delete {
+    border: none;
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.15s;
+    font-weight: 500;
+  }
+
+  .btn-download {
+    background: #4f6ef7;
+    color: #fff;
+  }
+
+  .btn-download:hover { background: #3b5ae0; }
+
+  .btn-delete {
+    background: #f0f0f0;
+    color: #666;
+  }
+
+  .btn-delete:hover { background: #e0e0e0; }
+
+  .empty-state {
+    text-align: center;
+    padding: 32px;
+    color: #aaa;
+    font-size: 14px;
+  }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <h1>文件管理器</h1>
+
+  <div class="upload-zone" id="uploadZone">
+    <input type="file" id="fileInput" multiple>
+    <svg class="upload-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+      <polyline points="17 8 12 3 7 8"/>
+      <line x1="12" y1="3" x2="12" y2="15"/>
+    </svg>
+    <div class="upload-text">点击或拖拽文件到此处上传</div>
+    <div class="upload-hint">支持多选，无大小限制</div>
+  </div>
+
+  <div class="file-list-header" id="listHeader" style="display:none;">
+    <h2>已上传的文件（<span id="fileCount">0</span>）</h2>
+    <button class="clear-all-btn" id="clearAllBtn">清空全部</button>
+  </div>
+
+  <ul class="file-list" id="fileList"></ul>
+  <div class="empty-state" id="emptyState">暂无上传的文件</div>
+</div>
+
+<script>
+  // Store files in memory (keyed by a generated id)
+  const files = new Map();
+  let idCounter = 0;
+
+  const fileInput  = document.getElementById('fileInput');
+  const uploadZone = document.getElementById('uploadZone');
+  const fileList   = document.getElementById('fileList');
+  const listHeader = document.getElementById('listHeader');
+  const fileCount  = document.getElementById('fileCount');
+  const emptyState = document.getElementById('emptyState');
+  const clearAllBtn= document.getElementById('clearAllBtn');
+
+  const COLOR_MAP = {
+    pdf:  '#e74c3c', doc:  '#3498db', docx: '#3498db',
+    xls:  '#27ae60', xlsx: '#27ae60', ppt:  '#e67e22', pptx: '#e67e22',
+    zip:  '#9b59b6', rar:  '#9b59b6',
+    jpg:  '#e91e63', jpeg: '#e91e63', png:  '#e91e63', gif:  '#e91e63', svg:  '#e91e63', webp: '#e91e63',
+    mp4:  '#1abc9c', mov:  '#1abc9c', avi:  '#1abc9c',
+    mp3:  '#ff9800', wav:  '#ff9800', flac: '#ff9800',
+    txt:  '#607d8b', md:  '#607d8b', csv:  '#607d8b',
+  };
+
+  function getExt(name) {
+    const parts = name.split('.');
+    return parts.length > 1 ? parts.pop().toLowerCase() : '';
+  }
+
+  function formatSize(bytes) {
+    if (bytes === 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(1024));
+    return (bytes / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 1) + ' ' + units[i];
+  }
+
+  function getFileLabel(name) {
+    const ext = getExt(name);
+    return ext ? ext.toUpperCase().slice(0, 4) : 'FILE';
+  }
+
+  function getFileColor(name) {
+    return COLOR_MAP[getExt(name)] || '#78909c';
+  }
+
+  function renderList() {
+    const items = Array.from(files.values());
+    fileList.innerHTML = '';
+    items.forEach(item => {
+      const li = document.createElement('li');
+      li.className = 'file-item';
+      li.innerHTML = `
+        <div class="file-icon" style="background:${getFileColor(item.name)}">${getFileLabel(item.name)}</div>
+        <div class="file-info">
+          <div class="file-name" title="${item.name}">${item.name}</div>
+          <div class="file-size">${formatSize(item.size)}</div>
+        </div>
+        <div class="file-actions">
+          <button class="btn-download" onclick="downloadFile('${item.id}')">下载</button>
+          <button class="btn-delete"  onclick="deleteFile('${item.id}')">删除</button>
+        </div>`;
+      fileList.appendChild(li);
+    });
+    const total = files.size;
+    listHeader.style.display = total ? 'flex' : 'none';
+    emptyState.style.display = total ? 'none' : '';
+    fileCount.textContent = total;
+  }
+
+  function addFiles(fileListObj) {
+    Array.from(fileListObj).forEach(file => {
+      const id = String(++idCounter);
+      files.set(id, { id, name: file.name, size: file.size, data: file });
+    });
+    renderList();
+  }
+
+  window.downloadFile = function(id) {
+    const item = files.get(id);
+    if (!item) return;
+    const url = URL.createObjectURL(item.data);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = item.name;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  window.deleteFile = function(id) {
+    files.delete(id);
+    renderList();
+  };
+
+  clearAllBtn.addEventListener('click', () => {
+    if (files.size === 0) return;
+    if (confirm('确认清空所有已上传的文件？')) {
+      files.clear();
+      renderList();
+    }
+  });
+
+  fileInput.addEventListener('change', e => addFiles(e.target.files));
+
+  // Drag & drop
+  uploadZone.addEventListener('dragover', e => {
+    e.preventDefault();
+    uploadZone.classList.add('drag-over');
+  });
+  uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('drag-over'));
+  uploadZone.addEventListener('drop', e => {
+    e.preventDefault();
+    uploadZone.classList.remove('drag-over');
+    if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files);
+  });
+</script>
+</body>
+</html>
