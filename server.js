@@ -10,17 +10,14 @@ const USERS_FILE = path.join(__dirname, 'users.json');
 
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
-// ── Sessions (in-memory, cleared on restart) ──
 const sessions = new Map();
 
-// ── Users (persisted to disk) ──
 function loadUsers() {
   try { return JSON.parse(fs.readFileSync(USERS_FILE, 'utf8')); } catch { return {}; }
 }
 function saveUsers(u) { fs.writeFileSync(USERS_FILE, JSON.stringify(u, null, 2)); }
 let users = loadUsers();
 
-// ── Helpers ──
 function hashPwd(p) { return crypto.createHash('sha256').update(p).digest('hex'); }
 function genToken() { return crypto.randomBytes(32).toString('hex'); }
 function getBody(req) {
@@ -41,7 +38,6 @@ function getUser(req) {
   return sessions.has(t) ? sessions.get(t) : null;
 }
 
-// ── Multipart parser ──
 function parseMultipart(body, boundary) {
   const sep = '\r\n--' + boundary;
   const parts = body.toString('latin1').split(sep);
@@ -63,8 +59,210 @@ function parseMultipart(body, boundary) {
   return files;
 }
 
-// ── HTML page ──
-const HTML = `<!DOCTYPE html>
+// ── Build the HTML page ──
+const HTML = buildHTML();
+
+function buildHTML() {
+  // The renderList function must generate onclick="downloadFile('filename')"
+  // Inside the template literal, we use escaped single quotes:
+  //   \\'  produces a literal ' in the output string
+  // So: '...downloadFile(\\''+f.name+'\\')...' renders as:
+  //   ...downloadFile(''+f.name+'')... which evaluates to:
+  //   ...downloadFile('test.html')...
+  
+  // We'll use a helper to build the button HTML safely
+  const scriptContent = `
+const COLOR_MAP = {
+  pdf:'#e74c3c', doc:'#3498db', docx:'#3498db', xls:'#27ae60', xlsx:'#27ae60',
+  ppt:'#e67e22', pptx:'#e67e22', zip:'#9b59b6', rar:'#9b59b6',
+  jpg:'#e91e63', jpeg:'#e91e63', png:'#e91e63', gif:'#e91e63', svg:'#e91e63', webp:'#e91e63',
+  mp4:'#1abc9c', mov:'#1abc9c', avi:'#1abc9c',
+  mp3:'#ff9800', wav:'#ff9800', flac:'#ff9800',
+  txt:'#607d8b', md:'#607d8b', csv:'#607d8b'
+};
+let token = (typeof localStorage!=='undefined'?localStorage.getItem('fm_token'):null);
+let currentUser = (typeof localStorage!=='undefined'?localStorage.getItem('fm_user'):null) || '';
+let fileListData = [];
+
+(async()=>{
+  if(token){
+    const r = await fetch('/api/me', {headers:{Authorization:'Bearer '+token}});
+    if(r.ok){ showApp(); return; }
+  }
+  showLogin();
+})();
+
+function showLogin(){
+  document.getElementById('loginScreen').style.display='block';
+  document.getElementById('registerScreen').style.display='none';
+  document.getElementById('appScreen').style.display='none';
+  document.getElementById('loginErr').style.display='none';
+  document.getElementById('loginUser').value='';
+  document.getElementById('loginPwd').value='';
+}
+function showRegister(){
+  document.getElementById('loginScreen').style.display='none';
+  document.getElementById('registerScreen').style.display='block';
+  document.getElementById('appScreen').style.display='none';
+  document.getElementById('regErr').style.display='none';
+  document.getElementById('regOk').style.display='none';
+  document.getElementById('regUser').value='';
+  document.getElementById('regPwd').value='';
+  document.getElementById('regPwd2').value='';
+}
+function showApp(){
+  document.getElementById('loginScreen').style.display='none';
+  document.getElementById('registerScreen').style.display='none';
+  document.getElementById('appScreen').style.display='block';
+  document.getElementById('userName').textContent=currentUser;
+  fetch('/api/addresses').then(r=>r.json()).then(addrs=>{
+    const wrap=document.getElementById('localAddrs');
+    wrap.innerHTML='';
+    addrs.forEach(a=>{
+      const el=document.createElement('a');
+      el.className='addr'; el.href='#'; el.textContent=a;
+      el.onclick=e=>{e.preventDefault();copyAddr(el,a);};
+      wrap.appendChild(el);
+    });
+  });
+  fetchFiles();
+}
+
+async function doLogin(){
+  const u=document.getElementById('loginUser').value.trim();
+  const p=document.getElementById('loginPwd').value;
+  const err=document.getElementById('loginErr');
+  if(!u||!p){err.textContent='请输入用户名和密码';err.style.display='block';return;}
+  const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})});
+  const data=await r.json();
+  if(r.ok){
+    token=data.token; currentUser=data.username;
+    try{localStorage.setItem('fm_token',token);}catch(e){}
+    try{localStorage.setItem('fm_user',currentUser);}catch(e){}
+    showApp();
+  } else { err.textContent=data.error||'登录失败'; err.style.display='block'; }
+}
+async function doRegister(){
+  const u=document.getElementById('regUser').value.trim();
+  const p=document.getElementById('regPwd').value;
+  const p2=document.getElementById('regPwd2').value;
+  const err=document.getElementById('regErr');
+  const ok=document.getElementById('regOk');
+  err.style.display='none'; ok.style.display='none';
+  if(!u||!p){err.textContent='请填写完整信息';err.style.display='block';return;}
+  if(u.length<2||u.length>20){err.textContent='用户名需2-20个字符';err.style.display='block';return;}
+  if(p.length<6){err.textContent='密码至少6位';err.style.display='block';return;}
+  if(p!==p2){err.textContent='两次密码不一致';err.style.display='block';return;}
+  const r=await fetch('/api/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})});
+  const data=await r.json();
+  if(r.ok){ok.textContent='注册成功！正在跳转登录…';ok.style.display='block';setTimeout(showLogin,1200);}
+  else {err.textContent=data.error||'注册失败';err.style.display='block';}
+}
+function doLogout(){
+  if(token) fetch('/api/logout',{method:'POST',headers:{Authorization:'Bearer '+token}}).catch(()=>{});
+  token=null; currentUser='';
+  try{localStorage.removeItem('fm_token');}catch(e){}
+  try{localStorage.removeItem('fm_user');}catch(e){}
+  showLogin();
+}
+function showErr(el,msg){el.textContent=msg;el.style.display='block';}
+function showToast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2500);}
+function copyAddr(el,text){navigator.clipboard.writeText(text).then(()=>{const o=el.textContent;el.textContent='✓ 已复制';setTimeout(()=>el.textContent=o,1200);});}
+function formatSize(b){if(!b)return'0 B';const u=['B','KB','MB','GB'];const i=Math.floor(Math.log(b)/Math.log(1024));return(b/Math.pow(1024,i)).toFixed(i===0?0:1)+' '+u[i];}
+function getFileLabel(n){const e=n.split('.');return e.length>1?e[e.length-1].toUpperCase().slice(0,4):'FILE';}
+function getFileColor(n){return COLOR_MAP[(n.split('.').pop()||'').toLowerCase()]||'#78909c';}
+function escHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+async function fetchFiles(){
+  const r=await fetch('/api/files',{headers:{Authorization:'Bearer '+token}});
+  if(!r.ok){doLogout();return;}
+  fileListData=await r.json();
+  renderList();
+}
+function renderList(){
+  const list=document.getElementById('fileList');
+  const header=document.getElementById('listHeader');
+  const empty=document.getElementById('emptyState');
+  list.innerHTML='';
+  fileListData.forEach(f=>{
+    const li=document.createElement('li');
+    li.className='file-item';
+    // Use escape attribute to build safe onclick handlers
+    // This produces: onclick="downloadFile('filename.html')"
+    const onDownload = "downloadFile('" + f.name.replace(/'/g, "\\'") + "')";
+    const onDelete = "deleteFile('" + f.name.replace(/'/g, "\\'") + "')";
+    li.innerHTML=
+      '<div class="file-icon" style="background:'+getFileColor(f.name)+'">'+getFileLabel(f.name)+'</div>'+
+      '<div class="file-info"><div class="file-name" title="'+escHtml(f.name)+'">'+escHtml(f.name)+'</div>'+
+      '<div class="file-size">'+formatSize(f.size)+'</div></div>'+
+      '<div class="file-actions">'+
+        '<button class="btn-download" onclick="'+onDownload+'">下载</button>'+
+        '<button class="btn-delete" onclick="'+onDelete+'">删除</button>'+
+      '</div>';
+    list.appendChild(li);
+  });
+  const total=fileListData.length;
+  header.style.display=total?'flex':'none';
+  empty.style.display=total?'none':'';
+  document.getElementById('fileCount').textContent=total;
+}
+function downloadFile(name){
+  const a=document.createElement('a');
+  a.href='/download/'+encodeURIComponent(name);
+  a.download=name;
+  document.body.appendChild(a);a.click();a.remove();
+}
+async function deleteFile(name){
+  await fetch('/delete',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify({name})});
+  await fetchFiles();
+  showToast('已删除: '+name);
+}
+document.getElementById('clearAllBtn').addEventListener('click',async()=>{
+  if(!fileListData.length)return;
+  if(!confirm('确认清空所有已上传的文件？'))return;
+  await fetch('/delete-all',{method:'POST',headers:{Authorization:'Bearer '+token}});
+  await fetchFiles();
+  showToast('已清空全部文件');
+});
+
+function uploadFiles(files){
+  const wrap=document.getElementById('progressWrap');
+  const fill=document.getElementById('progressFill');
+  const label=document.getElementById('progressLabel');
+  wrap.style.display='block';
+  fill.style.width='0%';
+  label.textContent='准备上传…';
+  const form=new FormData();
+  files.forEach(f=>form.append('files',f));
+  const xhr=new XMLHttpRequest();
+  xhr.open('POST','/upload',true);
+  xhr.setRequestHeader('Authorization','Bearer '+token);
+  xhr.upload.onprogress=e=>{if(e.lengthComputable)fill.style.width=Math.round(e.loaded/e.total*90)+'%';};
+  xhr.onload=function(){
+    fill.style.width='100%';
+    label.textContent='上传完成！';
+    setTimeout(()=>wrap.style.display='none',1200);
+    fetchFiles();
+    showToast('成功上传 '+files.length+' 个文件');
+  };
+  xhr.onerror=function(){fill.style.width='0%';label.textContent='上传失败，请重试';setTimeout(()=>wrap.style.display='none',2000);};
+  xhr.send(form);
+}
+
+const fileInput=document.getElementById('fileInput');
+const uploadZone=document.getElementById('uploadZone');
+fileInput.addEventListener('change',e=>{if(e.target.files.length)uploadFiles(e.target.files);});
+uploadZone.addEventListener('dragover',e=>{e.preventDefault();uploadZone.classList.add('drag-over');});
+uploadZone.addEventListener('dragleave',()=>uploadZone.classList.remove('drag-over'));
+uploadZone.addEventListener('drop',e=>{
+  e.preventDefault();uploadZone.classList.remove('drag-over');
+  if(e.dataTransfer.files.length)uploadFiles(e.dataTransfer.files);
+});
+document.getElementById('loginPwd').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
+document.getElementById('regPwd2').addEventListener('keydown',e=>{if(e.key==='Enter')doRegister();});
+`;
+
+  return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -132,7 +330,7 @@ const HTML = `<!DOCTYPE html>
   .toast.show { opacity:1; }
 </style>
 </head>
-<body>
+<body><noscript><div style="padding:40px;text-align:center;background:#fff2f2;color:#c00;font-family:sans-serif;"><strong>请启用 JavaScript</strong>以使用文件管理器。</div></noscript>
 
 <div id="loginScreen" class="auth-wrap" style="display:none;">
   <div class="auth-card">
@@ -193,194 +391,10 @@ const HTML = `<!DOCTYPE html>
 
 <div class="toast" id="toast"></div>
 
-<script>
-const COLOR_MAP = {
-  pdf:'#e74c3c', doc:'#3498db', docx:'#3498db', xls:'#27ae60', xlsx:'#27ae60',
-  ppt:'#e67e22', pptx:'#e67e22', zip:'#9b59b6', rar:'#9b59b6',
-  jpg:'#e91e63', jpeg:'#e91e63', png:'#e91e63', gif:'#e91e63', svg:'#e91e63', webp:'#e91e63',
-  mp4:'#1abc9c', mov:'#1abc9c', avi:'#1abc9c',
-  mp3:'#ff9800', wav:'#ff9800', flac:'#ff9800',
-  txt:'#607d8b', md:'#607d8b', csv:'#607d8b'
-};
-let token = localStorage.getItem('fm_token');
-let currentUser = localStorage.getItem('fm_user') || '';
-let fileListData = [];
-
-(async()=>{
-  if(token){
-    const r = await fetch('/api/me', {headers:{Authorization:'Bearer '+token}});
-    if(r.ok){ showApp(); return; }
-  }
-  showLogin();
-})();
-
-function showLogin(){
-  document.getElementById('loginScreen').style.display='block';
-  document.getElementById('registerScreen').style.display='none';
-  document.getElementById('appScreen').style.display='none';
-  document.getElementById('loginErr').style.display='none';
-  document.getElementById('loginUser').value='';
-  document.getElementById('loginPwd').value='';
-}
-function showRegister(){
-  document.getElementById('loginScreen').style.display='none';
-  document.getElementById('registerScreen').style.display='block';
-  document.getElementById('appScreen').style.display='none';
-  document.getElementById('regErr').style.display='none';
-  document.getElementById('regOk').style.display='none';
-  document.getElementById('regUser').value='';
-  document.getElementById('regPwd').value='';
-  document.getElementById('regPwd2').value='';
-}
-function showApp(){
-  document.getElementById('loginScreen').style.display='none';
-  document.getElementById('registerScreen').style.display='none';
-  document.getElementById('appScreen').style.display='block';
-  document.getElementById('userName').textContent=currentUser;
-  fetch('/api/addresses').then(r=>r.json()).then(addrs=>{
-    const wrap=document.getElementById('localAddrs');
-    wrap.innerHTML='';
-    addrs.forEach(a=>{
-      const el=document.createElement('a');
-      el.className='addr'; el.href='#'; el.textContent=a;
-      el.onclick=e=>{e.preventDefault();copyAddr(el,a);};
-      wrap.appendChild(el);
-    });
-  });
-  fetchFiles();
-}
-
-async function doLogin(){
-  const u=document.getElementById('loginUser').value.trim();
-  const p=document.getElementById('loginPwd').value;
-  const err=document.getElementById('loginErr');
-  if(!u||!p){err.textContent='请输入用户名和密码';err.style.display='block';return;}
-  const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})});
-  const data=await r.json();
-  if(r.ok){
-    token=data.token; currentUser=data.username;
-    localStorage.setItem('fm_token',token);
-    localStorage.setItem('fm_user',currentUser);
-    showApp();
-  } else { err.textContent=data.error||'登录失败'; err.style.display='block'; }
-}
-async function doRegister(){
-  const u=document.getElementById('regUser').value.trim();
-  const p=document.getElementById('regPwd').value;
-  const p2=document.getElementById('regPwd2').value;
-  const err=document.getElementById('regErr');
-  const ok=document.getElementById('regOk');
-  err.style.display='none'; ok.style.display='none';
-  if(!u||!p){showErr(err,'请填写完整信息');return;}
-  if(u.length<2||u.length>20){showErr(err,'用户名需2-20个字符');return;}
-  if(p.length<6){showErr(err,'密码至少6位');return;}
-  if(p!==p2){showErr(err,'两次密码不一致');return;}
-  const r=await fetch('/api/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})});
-  const data=await r.json();
-  if(r.ok){ok.textContent='注册成功！正在跳转登录…';ok.style.display='block';setTimeout(showLogin,1200);}
-  else {showErr(err,data.error||'注册失败');}
-}
-function doLogout(){
-  if(token) fetch('/api/logout',{method:'POST',headers:{Authorization:'Bearer '+token}}).catch(()=>{});
-  token=null; currentUser='';
-  localStorage.removeItem('fm_token');
-  localStorage.removeItem('fm_user');
-  showLogin();
-}
-function showErr(el,msg){el.textContent=msg;el.style.display='block';}
-function showToast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2500);}
-function copyAddr(el,text){navigator.clipboard.writeText(text).then(()=>{const o=el.textContent;el.textContent='✓ 已复制';setTimeout(()=>el.textContent=o,1200);});}
-function formatSize(b){if(!b)return'0 B';const u=['B','KB','MB','GB'];const i=Math.floor(Math.log(b)/Math.log(1024));return(b/Math.pow(1024,i)).toFixed(i===0?0:1)+' '+u[i];}
-function getFileLabel(n){const e=n.split('.');return e.length>1?e[e.length-1].toUpperCase().slice(0,4):'FILE';}
-function getFileColor(n){return COLOR_MAP[(n.split('.').pop()||'').toLowerCase()]||'#78909c';}
-function escHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
-
-async function fetchFiles(){
-  const r=await fetch('/api/files',{headers:{Authorization:'Bearer '+token}});
-  if(!r.ok){doLogout();return;}
-  fileListData=await r.json();
-  renderList();
-}
-function renderList(){
-  const list=document.getElementById('fileList');
-  const header=document.getElementById('listHeader');
-  const empty=document.getElementById('emptyState');
-  list.innerHTML='';
-  fileListData.forEach(f=>{
-    const li=document.createElement('li');
-    li.className='file-item';
-    li.innerHTML=
-      '<div class="file-icon" style="background:'+getFileColor(f.name)+'">'+getFileLabel(f.name)+'</div>'+
-      '<div class="file-info"><div class="file-name" title="'+escHtml(f.name)+'">'+escHtml(f.name)+'</div>'+
-      '<div class="file-size">'+formatSize(f.size)+'</div></div>'+
-      '<div class="file-actions">'+
-        '<button class="btn-download" onclick="downloadFile(\''+escHtml(f.name)+'\')">下载</button>'+
-        '<button class="btn-delete" onclick="deleteFile(\''+escHtml(f.name)+'\')">删除</button>'+
-      '</div>';
-    list.appendChild(li);
-  });
-  const total=fileListData.length;
-  header.style.display=total?'flex':'none';
-  empty.style.display=total?'none':'';
-  document.getElementById('fileCount').textContent=total;
-}
-function downloadFile(name){
-  const a=document.createElement('a');
-  a.href='/download/'+encodeURIComponent(name);
-  a.download=name;
-  document.body.appendChild(a);a.click();a.remove();
-}
-async function deleteFile(name){
-  await fetch('/delete',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify({name})});
-  await fetchFiles();
-  showToast('已删除: '+name);
-}
-document.getElementById('clearAllBtn').addEventListener('click',async()=>{
-  if(!fileListData.length)return;
-  if(!confirm('确认清空所有已上传的文件？'))return;
-  await fetch('/delete-all',{method:'POST',headers:{Authorization:'Bearer '+token}});
-  await fetchFiles();
-  showToast('已清空全部文件');
-});
-
-function uploadFiles(files){
-  const wrap=document.getElementById('progressWrap');
-  const fill=document.getElementById('progressFill');
-  const label=document.getElementById('progressLabel');
-  wrap.style.display='block';
-  fill.style.width='0%';
-  label.textContent='准备上传…';
-  const form=new FormData();
-  files.forEach(f=>form.append('files',f));
-  const xhr=new XMLHttpRequest();
-  xhr.open('POST','/upload',true);
-  xhr.setRequestHeader('Authorization','Bearer '+token);
-  xhr.upload.onprogress=e=>{if(e.lengthComputable)fill.style.width=Math.round(e.loaded/e.total*90)+'%';};
-  xhr.onload=function(){
-    fill.style.width='100%';
-    label.textContent='上传完成！';
-    setTimeout(()=>wrap.style.display='none',1200);
-    fetchFiles();
-    showToast('成功上传 '+files.length+' 个文件');
-  };
-  xhr.onerror=function(){fill.style.width='0%';label.textContent='上传失败，请重试';setTimeout(()=>wrap.style.display='none',2000);};
-  xhr.send(form);
-}
-
-const fileInput=document.getElementById('fileInput');
-const uploadZone=document.getElementById('uploadZone');
-fileInput.addEventListener('change',e=>{if(e.target.files.length)uploadFiles(e.target.files);});
-uploadZone.addEventListener('dragover',e=>{e.preventDefault();uploadZone.classList.add('drag-over');});
-uploadZone.addEventListener('dragleave',()=>uploadZone.classList.remove('drag-over'));
-uploadZone.addEventListener('drop',e=>{
-  e.preventDefault();uploadZone.classList.remove('drag-over');
-  if(e.dataTransfer.files.length)uploadFiles(e.dataTransfer.files);
-});
-document.getElementById('loginPwd').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
-document.getElementById('regPwd2').addEventListener('keydown',e=>{if(e.key==='Enter')doRegister();});
-</script>
+<script>${scriptContent}</script>
 </body>
 </html>`;
+}
 
 // ── HTTP Server ──
 const server = http.createServer(async (req, res) => {
@@ -438,7 +452,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // ── API: list files (requires auth) ──
+  // ── API: files (requires auth) ──
   if (url.pathname === '/api/files' && method === 'GET') {
     const u = getUser(req);
     if (!u) { send(res, 401, { error: '请先登录' }); return; }
