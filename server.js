@@ -274,7 +274,7 @@ function uploadFiles(files){
   };
   xhr.timeout = 30000;
   xhr.send(form);
-  };
+}
 
 const fileInput=document.getElementById('fileInput');
 const uploadZone=document.getElementById('uploadZone');
