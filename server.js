@@ -249,7 +249,6 @@ function uploadFiles(files){
   xhr.open('POST','/upload',true);
   xhr.setRequestHeader('Authorization','Bearer '+token);
   xhr.onload=function(){
-    console.log('[UPLOAD] onload fired, status:', xhr.status, 'response:', xhr.responseText);
     if(xhr.status === 200){
       fill.style.width='100%';
       label.textContent='上传完成！';
@@ -257,14 +256,12 @@ function uploadFiles(files){
       fetchFiles();
       showToast('成功上传 '+files.length+' 个文件');
     } else {
-      console.error('[UPLOAD] Server error:', xhr.status, xhr.responseText);
       fill.style.width='0%';
       label.textContent='上传失败 (HTTP '+xhr.status+')';
       setTimeout(()=>wrap.style.display='none',3000);
     }
   };
   xhr.onerror=function(e){
-    console.error('[UPLOAD] XHR error:', e);
     fill.style.width='0%';
     label.textContent='上传失败，网络错误';
     setTimeout(()=>wrap.style.display='none',3000);
