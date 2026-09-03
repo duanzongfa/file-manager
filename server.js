@@ -245,41 +245,66 @@ document.getElementById('clearAllBtn').addEventListener('click',async()=>{
 });
 
 function uploadFiles(files){
-  console.log('[UPLOAD] Starting upload of', files.length, 'files, token exists:', !!token);
-  const wrap=document.getElementById('progressWrap');
-  const fill=document.getElementById('progressFill');
-  const label=document.getElementById('progressLabel');
-  wrap.style.display='block';
-  fill.style.width='0%';
-  label.textContent='准备上传…';
-  const form=new FormData();
-  files.forEach(f=>form.append('files',f));
-  const xhr=new XMLHttpRequest();
-  xhr.open('POST','/upload',true);
-  xhr.setRequestHeader('Authorization','Bearer '+token);
-  xhr.onload=function(){
-    if(xhr.status === 200){
-      fill.style.width='100%';
-      label.textContent='上传完成！';
-      setTimeout(()=>wrap.style.display='none',1200);
-      fetchFiles();
-      showToast('成功上传 '+files.length+' 个文件');
-    } else {
-      fill.style.width='0%';
-      label.textContent='上传失败 (HTTP '+xhr.status+')';
-      setTimeout(()=>wrap.style.display='none',3000);
+  console.log('[UPLOAD] Starting upload of', files.length, 'files, token exists:', !!token, 'token preview:', token ? token.substring(0, 8) : 'null');
+  if (!token) { showToast('请先登录'); return; }
+  const wrap = document.getElementById('progressWrap');
+  const fill = document.getElementById('progressFill');
+  const label = document.getElementById('progressLabel');
+  wrap.style.display = 'block';
+  fill.style.width = '0%';
+  label.textContent = '准备上传…';
+  const form = new FormData();
+  files.forEach(f => form.append('files', f));
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', '/upload', true);
+  xhr.setRequestHeader('Authorization', 'Bearer ' + token);
+  xhr.onprogress = function(e) {
+    if (e.lengthComputable) {
+      const pct = Math.round(e.loaded / e.total * 100);
+      fill.style.width = pct + '%';
+      label.textContent = '上传中… ' + pct + '%';
     }
   };
-  xhr.onerror=function(e){
-    fill.style.width='0%';
-    label.textContent='上传失败，网络错误';
-    setTimeout(()=>wrap.style.display='none',3000);
+  xhr.onload = function() {
+    console.log('[UPLOAD] Response status:', xhr.status, 'body:', xhr.responseText);
+    if (xhr.status === 200) {
+      try {
+        const d = JSON.parse(xhr.responseText);
+        if (d.ok) {
+          fill.style.width = '100%';
+          label.textContent = '上传完成！';
+          setTimeout(() => { wrap.style.display = 'none'; }, 1200);
+          fetchFiles();
+          showToast('成功上传 ' + files.length + ' 个文件');
+          const fi = document.getElementById('fileInput');
+          if (fi) fi.value = '';
+          return;
+        }
+      } catch (e) {}
+      fill.style.width = '0%';
+      label.textContent = '上传失败：服务器返回异常';
+      setTimeout(() => { wrap.style.display = 'none'; }, 3000);
+    } else if (xhr.status === 401) {
+      fill.style.width = '0%';
+      label.textContent = '登录已失效，请重新登录';
+      setTimeout(() => { wrap.style.display = 'none'; doLogout(); }, 2500);
+    } else {
+      fill.style.width = '0%';
+      label.textContent = '上传失败 (HTTP ' + xhr.status + ')';
+      setTimeout(() => { wrap.style.display = 'none'; }, 3000);
+    }
   };
-  xhr.ontimeout=function(){
+  xhr.onerror = function() {
+    console.error('[UPLOAD] XHR network error');
+    fill.style.width = '0%';
+    label.textContent = '上传失败，网络错误';
+    setTimeout(() => { wrap.style.display = 'none'; }, 3000);
+  };
+  xhr.ontimeout = function() {
     console.error('[UPLOAD] XHR timeout');
-    fill.style.width='0%';
-    label.textContent='上传超时';
-    setTimeout(()=>wrap.style.display='none',3000);
+    fill.style.width = '0%';
+    label.textContent = '上传超时';
+    setTimeout(() => { wrap.style.display = 'none'; }, 3000);
   };
   xhr.timeout = 30000;
   xhr.send(form);
